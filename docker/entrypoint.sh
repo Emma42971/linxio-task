@@ -57,8 +57,16 @@ wait_for_redis
 # Generate Prisma Client
 echo ""
 echo "🔨 Generating Prisma Client..."
-cd /app/backend
-npx prisma generate
+# Check if we're in a dist structure or workspace structure
+if [ -d "/app/backend" ]; then
+  cd /app/backend
+else
+  # We're in dist structure, prisma should be in /app/prisma
+  cd /app
+fi
+npx prisma generate || {
+  echo "⚠️  Prisma generate failed or already done"
+}
 
 # Run database migrations
 echo ""

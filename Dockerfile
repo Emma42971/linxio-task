@@ -19,38 +19,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # =============================================================================
 FROM base AS builder
 
-# Copy package files first for better caching
+# Update npm to latest version for better workspace support
+RUN npm install -g npm@latest
+
+# Copy package files first for better layer caching
 COPY package.json package-lock.json ./
-COPY backend/package.json ./backend/
-COPY frontend/package.json ./frontend/
 
-# Install all dependencies (including dev) for workspaces
-# Note: Using npm install instead of npm ci for better workspace compatibility
-# If package-lock.json is out of sync, it will be updated automatically
-RUN npm install --legacy-peer-deps && npm cache clean --force
+# Copy workspace directories
+COPY backend ./backend
+COPY frontend ./frontend
+COPY scripts ./scripts
 
-# Copy all source files
-COPY . .
-
-# Remove .env and other sensitive files if they exist
-RUN rm -f .env .env.local .env.*.local || true
-
-# Set dummy DATABASE_URL for Prisma generate
+# Set dummy DATABASE_URL for Prisma generate (required by Prisma during build)
 ENV DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy?schema=public"
 
-# Generate Prisma Client
-WORKDIR /app/backend
-RUN npx prisma generate
+# Install dependencies
+# Note: npm install handles workspaces automatically
+RUN npm install
 
-# Build backend
-RUN npm run build
-
-# Build frontend
-WORKDIR /app/frontend
-RUN npm run build
+# Build the distribution using the build script
+RUN npm run build:dist
 
 # =============================================================================
-# Stage 3: Production
+# Stage 2: Production
 # =============================================================================
 FROM base AS production
 
@@ -61,20 +52,14 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Copy built application from builder
-COPY --from=builder --chown=appuser:appuser /app/backend/dist ./backend/dist
-COPY --from=builder --chown=appuser:appuser /app/backend/node_modules ./backend/node_modules
-COPY --from=builder --chown=appuser:appuser /app/backend/package.json ./backend/
-COPY --from=builder --chown=appuser:appuser /app/backend/prisma ./backend/prisma
-COPY --from=builder --chown=appuser:appuser /app/frontend/.next ./frontend/.next
-COPY --from=builder --chown=appuser:appuser /app/frontend/node_modules ./frontend/node_modules
-COPY --from=builder --chown=appuser:appuser /app/frontend/package.json ./frontend/
-COPY --from=builder --chown=appuser:appuser /app/frontend/public ./frontend/public
-COPY --from=builder --chown=appuser:appuser /app/frontend/server.js ./frontend/
-COPY --from=builder --chown=appuser:appuser /app/frontend/next.config.ts ./frontend/
-COPY --from=builder --chown=appuser:appuser /app/node_modules ./node_modules
-COPY --from=builder --chown=appuser:appuser /app/package.json ./
-COPY --from=builder --chown=appuser:appuser /app/package-lock.json ./
+# Copy only the dist directory from builder stage (created by build:dist)
+COPY --from=builder --chown=appuser:appuser /app/dist .
+
+# Validate that required files exist in the dist folder
+RUN if [ ! -f "package.json" ]; then \
+        echo "ERROR: dist directory is missing required files (package.json not found)"; \
+        exit 1; \
+    fi
 
 # Create necessary directories
 RUN mkdir -p /app/uploads /app/logs && \
@@ -95,5 +80,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 # Entrypoint
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["node", "backend/dist/main.js"]
+CMD ["node", "dist/main.js"]
 

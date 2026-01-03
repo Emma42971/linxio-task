@@ -6,14 +6,15 @@ services:
     image: postgres:16-alpine
     container_name: linxio-task-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-linxio_task}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-linxio_task_password}
-      POSTGRES_DB: ${POSTGRES_DB:-linxio_task}
+      # REQUIRED: Set these in .env file (no defaults for security)
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-linxio_task}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -21,20 +22,24 @@ services:
     networks:
       - linxio-task-network
     restart: unless-stopped
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+    # Security: Comment out ports if you don't need external access to PostgreSQL
+    # Only the app container needs access via the internal network
+    # ports:
+    #   - "${POSTGRES_PORT:-5432}:5432"
 
   # Redis for Bull Queue and Caching
   redis:
     image: redis:7-alpine
     container_name: linxio-task-redis
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-    command: sh -c "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes; else redis-server --appendonly yes; fi"
+      # REQUIRED: Set REDIS_PASSWORD in .env file (no default for security)
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    # Security: Always require password in production
+    command: sh -c "redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -a \"$$REDIS_PASSWORD\" ping; else redis-cli ping; fi"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -42,8 +47,10 @@ services:
     networks:
       - linxio-task-network
     restart: unless-stopped
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
+    # Security: Comment out ports if you don't need external access to Redis
+    # Only the app container needs access via the internal network
+    # ports:
+    #   - "${REDIS_PORT:-6379}:6379"
 
   # Linxio Task Application
   app:
@@ -56,19 +63,19 @@ services:
       NODE_ENV: production
 
       # Database Configuration
-      DATABASE_URL: postgresql://${POSTGRES_USER:-linxio_task}:${POSTGRES_PASSWORD:-linxio_task_password}@postgres:5432/${POSTGRES_DB:-linxio_task}?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
 
       # Redis Configuration
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
 
-      # Application URLs
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000/api}
-      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3000/api}
+      # Application URLs (REQUIRED for production - set your domain)
+      FRONTEND_URL: ${FRONTEND_URL}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
 
       # Security (REQUIRED - must be set in .env)
       JWT_SECRET: ${JWT_SECRET}

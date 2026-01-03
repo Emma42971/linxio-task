@@ -1,0 +1,175 @@
+# Version removed - Docker Compose v2+ doesn't require it
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: linxio-task-postgres
+    environment:
+      # REQUIRED: Set these in .env file (no defaults for security)
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - linxio-task-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1g
+        reservations:
+          cpus: '0.5'
+          memory: 512m
+    # Security: Comment out ports if you don't need external access to PostgreSQL
+    # Only the app container needs access via the internal network
+    # ports:
+    #   - "${POSTGRES_PORT:-5432}:5432"
+
+  # Redis for Bull Queue and Caching
+  redis:
+    image: redis:7-alpine
+    container_name: linxio-task-redis
+    environment:
+      # REQUIRED: Set REDIS_PASSWORD in .env file (no default for security)
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    # Security: Always require password in production
+    command: sh -c "redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - linxio-task-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512m
+        reservations:
+          cpus: '0.25'
+          memory: 256m
+    # Security: Comment out ports if you don't need external access to Redis
+    # Only the app container needs access via the internal network
+    # ports:
+    #   - "${REDIS_PORT:-6379}:6379"
+
+  # Linxio Task Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: linxio-task-app
+    environment:
+      # Node Environment
+      NODE_ENV: production
+
+      # Database Configuration
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+
+      # Redis Configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+      # Application URLs (REQUIRED for production - set your domain)
+      FRONTEND_URL: ${FRONTEND_URL}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+
+      # Security (REQUIRED - must be set in .env)
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+
+      # Email Configuration (optional)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@linxio.com}
+      EMAIL_DOMAIN: ${EMAIL_DOMAIN:-linxio.com}
+
+      # File Upload
+      UPLOAD_DEST: /app/uploads
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-10485760}
+
+      # Queue Configuration
+      MAX_CONCURRENT_JOBS: ${MAX_CONCURRENT_JOBS:-5}
+      JOB_RETRY_ATTEMPTS: ${JOB_RETRY_ATTEMPTS:-3}
+
+      # AWS S3 Configuration (optional)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_BUCKET_NAME: ${AWS_BUCKET_NAME:-}
+
+      # OpenAI Configuration (optional)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+      # Application Configuration
+      APP_NAME: Linxio Task
+      APP_PORT: 3000
+      APP_HOST: 0.0.0.0
+
+      # Skip Redis check if Redis is not available
+      SKIP_REDIS_CHECK: ${SKIP_REDIS_CHECK:-false}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    volumes:
+      - app_uploads:/app/uploads
+      - app_logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - linxio-task-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4g
+        reservations:
+          cpus: '1.0'
+          memory: 2g
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/api/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  app_uploads:
+    driver: local
+  app_logs:
+    driver: local
+
+networks:
+  linxio-task-network:
+    driver: bridge
